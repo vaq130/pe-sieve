@@ -102,10 +102,16 @@ public:
 	{
 		is_ready = false;
 		memset(headerBuffer, 0, peconv::MAX_HEADER_SIZE);
-		init();
+		if (init()) {
+			DWORD img_size = peconv::get_image_size(headerBuffer);
+			loadRemotePe(img_size);
+		}
 	}
 
-	virtual ~RemoteModuleData() {}
+	virtual ~RemoteModuleData()
+	{
+		freeRemotePe();
+	}
 
 	bool isSectionExecutable(size_t section_number);
 	bool hasExecutableSection();
@@ -130,6 +136,37 @@ public:
 	BYTE headerBuffer[peconv::MAX_HEADER_SIZE];
 
 protected:
+	bool loadRemotePe(size_t buf_size)
+	{
+		freeRemotePe();
+		peBuffer = peconv::alloc_pe_buffer(buf_size, PAGE_READWRITE);
+		if (!peBuffer) {
+			return false;
+		}
+		peBufferSize = buf_size;
+		if (!peconv::read_remote_pe(this->processHandle, (BYTE*)this->modBaseAddr, buf_size, peBuffer, peBufferSize)) {
+			return false;
+		}
+		ULONGLONG found_base = peconv::find_base_candidate(peBuffer, peBufferSize);
+		ULONGLONG hdr_base = peconv::get_image_base(peBuffer);
+		std::cout << "Found Base: " << std::hex << found_base << " vs Header Base: " << hdr_base << "\n";
+		if (found_base != 0 && hdr_base != found_base) {
+			std::cout << "Dumping the PE\n";
+			peconv::dump_to_file("test.bin", peBuffer, peBufferSize);
+			system("pause");
+		}
+		return true;
+	}
+
+	void freeRemotePe()
+	{
+		if (peBuffer) {
+			peconv::free_pe_buffer(peBuffer);
+			peBuffer = nullptr;
+			peBufferSize = 0;
+		}
+	}
+
 	bool init();
 	bool loadHeader();
 	ULONGLONG getRemoteSectionVa(const size_t section_num);
@@ -137,6 +174,8 @@ protected:
 	HANDLE processHandle;
 	HMODULE modBaseAddr;
 
+	PBYTE peBuffer;
+	size_t peBufferSize;
 	bool is_ready;
 
 	friend class PeSection;
